@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>2026 U.S. Open Fantasy Golf Pool</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @keyframes pulse-live {
+      0%, 100% { opacity: 0.45; }
+      50% { opacity: 1; }
+    }
+    .live-dot {
+      animation: pulse-live 1.2s infinite;
+    }
+    details > summary {
+      list-style: none;
+    }
+    details > summary::-webkit-details-marker {
+      display: none;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900">
+  <main class="mx-auto max-w-4xl p-3 sm:p-5">
+    <header class="mb-4 rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <h1 class="text-lg font-bold leading-tight sm:text-2xl">2026 U.S. Open Fantasy Pool</h1>
+          <p class="text-xs text-slate-600 sm:text-sm">Top 5 of 6 golfers count · missed-cut penalty enabled</p>
+        </div>
+        <button id="refreshBtn" class="rounded-lg bg-slate-900 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-slate-800 sm:text-sm">
+          Refresh
+        </button>
+      </div>
+      <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs sm:text-sm">
+        <div class="flex items-center gap-2">
+          <span class="live-dot inline-block h-2.5 w-2.5 rounded-full bg-emerald-500" aria-hidden="true"></span>
+          <span id="liveLabel" class="font-medium text-emerald-700">Live</span>
+        </div>
+        <p id="lastUpdated" class="text-slate-600">Waiting for first refresh...</p>
+        <p id="penaltyInfo" class="text-slate-700"></p>
+      </div>
+      <p id="statusBanner" class="mt-3 hidden rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 sm:text-sm"></p>
+    </header>
+
+    <section class="rounded-xl bg-white shadow-sm ring-1 ring-slate-200">
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-xs sm:text-sm">
+          <thead class="sticky top-0 bg-slate-100 text-left">
+            <tr class="border-b border-slate-200 text-slate-600">
+              <th class="px-3 py-2 font-semibold">Pos</th>
+              <th class="px-3 py-2 font-semibold">Manager</th>
+              <th class="px-3 py-2 font-semibold">Team Score</th>
+              <th class="px-3 py-2 font-semibold">Active</th>
+            </tr>
+          </thead>
+          <tbody id="leaderboardBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const ESPN_ENDPOINT = "https://site.api.espn.com/apis/site/v2/sports/golf/leaderboard?league=pga";
+    const CACHE_KEY = "us_open_fantasy_cache_v1";
+
+    const LEAGUE_DATA = [
+      { manager: "Nick", tiebreaker: -5, picks: ["Scottie Scheffler", "Russell Henley", "Maverick McNealy", "Kurt Kitayama", "Gary Woodland", "Ryo Hisatsune"] },
+      { manager: "Dad", tiebreaker: -8, picks: ["Scottie Scheffler", "Collin Morikawa", "J.J. Spaun", "Shane Lowry", "Nicolai Højgaard", "Keegan Bradley"] },
+      { manager: "Mom", tiebreaker: -2, picks: ["Scottie Scheffler", "Sam Burns", "Justin Rose", "Adam Scott", "Alex Fitzpatrick", "Akshay Bhatia"] },
+      { manager: "Hannah", tiebreaker: -3, picks: ["Scottie Scheffler", "Russell Henley", "Justin Rose", "Sepp Straka", "Nicolai Højgaard", "Daniel Berger"] },
+      { manager: "Dan", tiebreaker: -1, picks: ["Scottie Scheffler", "Collin Morikawa", "Hideki Matsuyama", "Shane Lowry", "Jason Day", "Cameron Smith"] },
+      { manager: "Heath", tiebreaker: -1, picks: ["Tommy Fleetwood", "Sam Burns", "J.J. Spaun", "Shane Lowry", "Alex Fitzpatrick", "Corey Conners"] },
+      { manager: "Lauren", tiebreaker: 1, picks: ["Matt Fitzpatrick", "Chris Gotterup", "Justin Rose", "Aaron Rai", "Ryan Gerard", "Alex Noren"] },
+      { manager: "Iuliia", tiebreaker: -4, picks: ["Rory McIlroy", "Sam Burns", "Justin Rose", "Shane Lowry", "Ryan Gerard", "Alex Noren"] },
+      { manager: "Luke", tiebreaker: -2, picks: ["Xander Schauffele", "Russell Henley", "Hideki Matsuyama", "Alex Smalley", "J.T. Poston", "Brian Harman"] }
+    ];
+
+    const PLAYER_ALIASES = {
+      "jt poston": "j t poston",
+      "jj spaun": "j j spaun",
+      "nicolai hojgaard": "nicolai hojgaard",
+      "rory mcilroy": "rory mcilroy"
+    };
+
+    const leaderboardBody = document.getElementById("leaderboardBody");
+    const statusBanner = document.getElementById("statusBanner");
+    const lastUpdatedEl = document.getElementById("lastUpdated");
+    const penaltyInfoEl = document.getElementById("penaltyInfo");
+    const refreshBtn = document.getElementById("refreshBtn");
+    const liveLabel = document.getElementById("liveLabel");
+
+    function normalizeName(name) {
+      return (name || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/[^a-zA-Z\s]/g, " ")
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    function canonicalName(name) {
+      const normalized = normalizeName(name);
+      return PLAYER_ALIASES[normalized] || normalized;
+    }
+
+    function scoreToInt(value) {
+      if (value === null || value === undefined) return null;
+      const raw = String(value).trim().toUpperCase();
+      if (!raw || raw === "--") return null;
+      if (raw === "E" || raw === "EVEN") return 0;
+      const num = Number(raw.replace(/\+/g, ""));
+      if (Number.isFinite(num)) return num;
+      return null;
+    }
+
+    function formatScore(score) {
+      if (score === null || score === undefined || Number.isNaN(score)) return "--";
+      if (score === 0) return "E";
+      return score > 0 ? `+${score}` : `${score}`;
+    }
+
+    function scoreClass(score) {
+      if (score === null || score === undefined || Number.isNaN(score) || score === 0) {
+        return "text-slate-700";
+      }
+      return score < 0 ? "text-rose-600" : "text-sky-700";
+    }
+
+    function cutStatusFromCompetitor(competitor) {
+      const statusText = `${competitor?.status?.displayValue || ""} ${competitor?.status?.detail || ""} ${competitor?.status?.type?.description || ""}`.toUpperCase();
+      if (statusText.includes("MISSED CUT") || statusText.includes("MC")) return "Missed Cut";
+      return "Active";
+    }
+
+    function getTodayScore(competitor) {
+      const todayDetail = competitor?.status?.todayDetail;
+      if (todayDetail && typeof todayDetail === "string") {
+        const match = todayDetail.match(/([+-]?\d+|E)(?:\(|$)/i);
+        if (match) return scoreToInt(match[1]);
+      }
+      const linescores = Array.isArray(competitor?.linescores) ? competitor.linescores : [];
+      if (!linescores.length) return null;
+      const latest = linescores[linescores.length - 1];
+      return scoreToInt(latest?.displayValue ?? latest?.value);
+    }
+
+    function getThru(competitor) {
+      const status = competitor?.status || {};
+      if (status?.type?.completed) return "F";
+      if (status?.displayThru) return `Thru ${status.displayThru}`;
+      if (Number.isFinite(status?.hole)) return `Thru ${status.hole}`;
+      if (status?.displayValue) return status.displayValue;
+      return "--";
+    }
+
+    function deriveActualWinnerScore(competitors) {
+      const sorted = [...competitors].sort((a, b) => (a.position || 999) - (b.position || 999));
+      const leader = sorted[0];
+      return leader?.totalScore ?? 0;
+    }
+
+    function pickWeekendPenaltyScore(competitors) {
+      const madeCut = competitors.filter((c) => c.cutStatus === "Active" && Number.isFinite(c.totalScore));
+      if (!madeCut.length) return 20;
+      return madeCut.reduce((worst, next) => (next.totalScore > worst ? next.totalScore : worst), madeCut[0].totalScore);
+    }
+
+    function buildCompetitorMap(apiPayload) {
+      const event = apiPayload?.events?.[0];
+      const competition = event?.competitions?.[0];
+      const competitors = Array.isArray(competition?.competitors) ? competition.competitors : [];
+      const map = new Map();
+      const parsedCompetitors = [];
+
+      competitors.forEach((competitor) => {
+        const displayName = competitor?.athlete?.displayName || competitor?.athlete?.shortName;
+        if (!displayName) return;
+        const totalScore = scoreToInt(competitor?.score?.displayValue ?? competitor?.score?.value);
+        const cutStatus = cutStatusFromCompetitor(competitor);
+        const parsed = {
+          name: displayName,
+          canonical: canonicalName(displayName),
+          totalScore,
+          todayScore: getTodayScore(competitor),
+          thru: getThru(competitor),
+          cutStatus,
+          position: Number(competitor?.status?.position?.id || 999)
+        };
+        parsedCompetitors.push(parsed);
+        if (!map.has(parsed.canonical)) map.set(parsed.canonical, parsed);
+      });
+
+      return { map, parsedCompetitors };
+    }
+
+    function resolvePlayer(playerName, competitorMap) {
+      const canonical = canonicalName(playerName);
+      if (competitorMap.has(canonical)) return competitorMap.get(canonical);
+
+      const tokens = canonical.split(" ").filter(Boolean);
+      const fallbackMatch = [...competitorMap.values()].find((entry) =>
+        tokens.length > 1 && tokens.every((token) => entry.canonical.includes(token))
+      );
+      if (fallbackMatch) return fallbackMatch;
+
+      return null;
+    }
+
+    function computeLeagueStandings(apiPayload) {
+      const { map: competitorMap, parsedCompetitors } = buildCompetitorMap(apiPayload);
+      const weekendPenaltyScore = pickWeekendPenaltyScore(parsedCompetitors);
+      const actualWinnerScore = deriveActualWinnerScore(parsedCompetitors);
+
+      const managerScores = LEAGUE_DATA.map((team) => {
+        const roster = team.picks.map((player, index) => {
+          const competitor = resolvePlayer(player, competitorMap);
+          const totalScore = competitor?.totalScore;
+          const cutStatus = competitor?.cutStatus || "Active";
+          const replacementApplied = cutStatus === "Missed Cut";
+          const effectiveScore = replacementApplied ? weekendPenaltyScore : totalScore;
+          return {
+            name: player,
+            tier: `Tier ${index + 1}`,
+            todayScore: competitor?.todayScore ?? null,
+            thru: competitor?.thru ?? "--",
+            totalScore: totalScore ?? null,
+            effectiveScore: Number.isFinite(effectiveScore) ? effectiveScore : weekendPenaltyScore,
+            cutStatus: replacementApplied ? "Missed Cut (Penalty Applied)" : cutStatus,
+            contributes: false,
+            dropped: false
+          };
+        });
+
+        const sortedForCounting = [...roster]
+          .map((golfer, idx) => ({ golfer, idx }))
+          .sort((a, b) => a.golfer.effectiveScore - b.golfer.effectiveScore);
+
+        sortedForCounting.forEach((item, idx) => {
+          if (idx < 5) item.golfer.contributes = true;
+          if (idx === 5) item.golfer.dropped = true;
+        });
+
+        const countingFive = sortedForCounting.slice(0, 5).map((item) => item.golfer.effectiveScore);
+        const total = countingFive.reduce((sum, score) => sum + score, 0);
+        const activeCount = roster.filter((g) => !g.cutStatus.includes("Missed Cut")).length;
+        const tieDistance = Math.abs(team.tiebreaker - actualWinnerScore);
+
+        return {
+          manager: team.manager,
+          tiebreaker: team.tiebreaker,
+          tieDistance,
+          total,
+          activeCount,
+          roster
+        };
+      });
+
+      managerScores.sort((a, b) => {
+        if (a.total !== b.total) return a.total - b.total;
+        if (a.tieDistance !== b.tieDistance) return a.tieDistance - b.tieDistance;
+        return a.manager.localeCompare(b.manager);
+      });
+
+      managerScores.forEach((entry, i) => {
+        entry.position = i + 1;
+      });
+
+      return { standings: managerScores, weekendPenaltyScore };
+    }
+
+    function managerDetailMarkup(entry) {
+      const rows = entry.roster.map((golfer) => {
+        const contributionClass = golfer.contributes
+          ? "bg-emerald-50 border-emerald-200"
+          : golfer.dropped
+          ? "bg-slate-100 border-slate-200"
+          : "bg-white border-slate-200";
+
+        const contributionTag = golfer.contributes
+          ? '<span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">Counting</span>'
+          : golfer.dropped
+          ? '<span class="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-700">Dropped</span>'
+          : "";
+
+        const cutClass = golfer.cutStatus.includes("Missed Cut")
+          ? "text-amber-700"
+          : "text-emerald-700";
+
+        return `
+          <div class="rounded-lg border p-2 ${contributionClass}">
+            <div class="mb-1 flex items-start justify-between gap-2">
+              <p class="font-semibold text-slate-900">${golfer.name}</p>
+              ${contributionTag}
+            </div>
+            <div class="grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] sm:grid-cols-3 sm:text-xs">
+              <p><span class="text-slate-500">Tier:</span> ${golfer.tier}</p>
+              <p><span class="text-slate-500">Today:</span> <span class="${scoreClass(golfer.todayScore)} font-semibold">${formatScore(golfer.todayScore)}</span></p>
+              <p><span class="text-slate-500">Thru:</span> ${golfer.thru}</p>
+              <p><span class="text-slate-500">Total:</span> <span class="${scoreClass(golfer.totalScore)} font-semibold">${formatScore(golfer.totalScore)}</span></p>
+              <p class="${cutClass}"><span class="text-slate-500">Cut:</span> ${golfer.cutStatus}</p>
+              <p><span class="text-slate-500">Used:</span> <span class="${scoreClass(golfer.effectiveScore)} font-semibold">${formatScore(golfer.effectiveScore)}</span></p>
+            </div>
+          </div>
+        `;
+      }).join("");
+
+      return `
+        <div class="bg-slate-50 px-3 py-3">
+          <div class="mb-2 flex items-center justify-between text-xs sm:text-sm">
+            <p class="font-semibold">Roster Details</p>
+            <p class="text-slate-600">Tiebreaker Guess: ${formatScore(entry.tiebreaker)}</p>
+          </div>
+          <div class="grid gap-2">${rows}</div>
+        </div>
+      `;
+    }
+
+    function renderLeaderboard(standings) {
+      leaderboardBody.innerHTML = standings.map((entry) => {
+        const isLeader = entry.position === 1;
+        const highlightRow = isLeader ? "bg-emerald-50" : "bg-white";
+        const baseBorder = "border-b border-slate-200";
+
+        return `
+          <tr class="${baseBorder} ${highlightRow}">
+            <td colspan="4" class="p-0">
+              <details class="group">
+                <summary class="cursor-pointer px-3 py-2">
+                  <div class="grid grid-cols-[40px_1fr_auto_auto] items-center gap-2 text-xs sm:text-sm">
+                    <span class="font-bold ${isLeader ? "text-emerald-700" : "text-slate-700"}">${entry.position}</span>
+                    <span class="font-semibold">${entry.manager} ${isLeader ? '<span class="ml-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-700">1st</span>' : ""}</span>
+                    <span class="font-bold ${scoreClass(entry.total)}">${formatScore(entry.total)}</span>
+                    <span class="text-slate-600">${entry.activeCount}/6</span>
+                  </div>
+                </summary>
+                ${managerDetailMarkup(entry)}
+              </details>
+            </td>
+          </tr>
+        `;
+      }).join("");
+    }
+
+    function setStatus(message, type = "warning") {
+      if (!message) {
+        statusBanner.classList.add("hidden");
+        statusBanner.textContent = "";
+        return;
+      }
+      statusBanner.classList.remove("hidden");
+      statusBanner.textContent = message;
+      statusBanner.className =
+        type === "error"
+          ? "mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 sm:text-sm"
+          : "mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 sm:text-sm";
+    }
+
+    function getCachedPayload() {
+      try {
+        const raw = localStorage.getItem(CACHE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return parsed?.payload || null;
+      } catch (_err) {
+        return null;
+      }
+    }
+
+    function cachePayload(payload) {
+      try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ payload, cachedAt: new Date().toISOString() }));
+      } catch (_err) {
+        // No-op when storage is unavailable.
+      }
+    }
+
+    async function fetchLiveData() {
+      const response = await fetch(ESPN_ENDPOINT, { cache: "no-store" });
+      if (!response.ok) throw new Error(`API returned ${response.status}`);
+      return response.json();
+    }
+
+    async function refreshData() {
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = "Refreshing...";
+      liveLabel.textContent = "Live · syncing...";
+      setStatus("");
+
+      let payload;
+      let usingCache = false;
+
+      try {
+        payload = await fetchLiveData();
+        cachePayload(payload);
+      } catch (err) {
+        payload = getCachedPayload();
+        usingCache = Boolean(payload);
+        if (!payload) {
+          payload = { events: [{ competitions: [{ competitors: [] }] }] };
+          setStatus("Live data unavailable right now. Showing placeholders until API returns.", "error");
+        } else {
+          setStatus("Live API unavailable. Showing last cached snapshot.", "warning");
+        }
+      }
+
+      const { standings, weekendPenaltyScore } = computeLeagueStandings(payload);
+      renderLeaderboard(standings);
+
+      const nowText = new Date().toLocaleString([], { hour: "numeric", minute: "2-digit", second: "2-digit", month: "short", day: "numeric" });
+      lastUpdatedEl.textContent = `${usingCache ? "Cached" : "Live"} update at ${nowText}`;
+      penaltyInfoEl.textContent = `Weekend last-place penalty score: ${formatScore(weekendPenaltyScore)}`;
+      liveLabel.textContent = usingCache ? "Live (cached)" : "Live";
+
+      refreshBtn.disabled = false;
+      refreshBtn.textContent = "Refresh";
+    }
+
+    refreshBtn.addEventListener("click", refreshData);
+    refreshData();
+    setInterval(refreshData, 60000);
+  </script>
+</body>
+</html>
