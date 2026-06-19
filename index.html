@@ -154,6 +154,27 @@
       return scoreToInt(latest?.displayValue ?? latest?.value);
     }
 
+    function getLiveTotalScore(competitor) {
+      const statistics = Array.isArray(competitor?.statistics) ? competitor.statistics : [];
+      const scoreToParStat = statistics.find((stat) => {
+        const signature = `${stat?.name || ""} ${stat?.displayName || ""} ${stat?.abbreviation || ""}`.toLowerCase();
+        return signature.includes("scoretopar") || signature.includes("score to par");
+      });
+      const statScore = scoreToInt(scoreToParStat?.displayValue ?? scoreToParStat?.value);
+      if (Number.isFinite(statScore)) return statScore;
+
+      // ESPN can expose per-round to-par in linescores while "score" lags in-progress.
+      const linescores = Array.isArray(competitor?.linescores) ? competitor.linescores : [];
+      const roundToPar = linescores
+        .map((line) => scoreToInt(line?.displayValue))
+        .filter((value) => Number.isFinite(value));
+      if (roundToPar.length) {
+        return roundToPar.reduce((sum, value) => sum + value, 0);
+      }
+
+      return scoreToInt(competitor?.score?.displayValue ?? competitor?.score?.value);
+    }
+
     function getThru(competitor) {
       const status = competitor?.status || {};
       if (status?.type?.completed) return "F";
@@ -185,7 +206,7 @@
       competitors.forEach((competitor) => {
         const displayName = competitor?.athlete?.displayName || competitor?.athlete?.shortName;
         if (!displayName) return;
-        const totalScore = scoreToInt(competitor?.score?.displayValue ?? competitor?.score?.value);
+        const totalScore = getLiveTotalScore(competitor);
         const cutStatus = cutStatusFromCompetitor(competitor);
         const parsed = {
           name: displayName,
