@@ -247,11 +247,12 @@
 
         for (let i = 1; i <= steps; i += 1) {
           const hole = previous.holes + i * 3;
-          const ratio = gap === 0 ? 1 : (hole - previous.holes) / gap;
-          const interpolatedScore = previous.score + (targetPoint.score - previous.score) * ratio;
+          // Use step-wise carry-forward so lines advance by observed 3-hole buckets,
+          // instead of drawing a synthetic straight interpolation from origin/current.
+          const bucketScore = hole < targetPoint.holes ? previous.score : targetPoint.score;
           series.push({
             holes: hole,
-            score: interpolatedScore,
+            score: bucketScore,
             capturedAt: targetPoint.capturedAt
           });
         }
