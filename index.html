@@ -85,6 +85,7 @@
   <script>
     const ESPN_ENDPOINT = "https://site.api.espn.com/apis/site/v2/sports/golf/leaderboard?league=pga";
     const CACHE_KEY = "us_open_fantasy_cache_v1";
+    const PROGRESS_HISTORY_KEY = "us_open_team_progress_history_v1";
 
     const LEAGUE_DATA = [
       { manager: "Nick", tiebreaker: -5, picks: ["Scottie Scheffler", "Russell Henley", "Maverick McNealy", "Kurt Kitayama", "Gary Woodland", "Ryo Hisatsune"] },
@@ -156,6 +157,59 @@
     function managerColor(name) {
       const hash = [...name].reduce((acc, char) => acc + char.charCodeAt(0), 0);
       return CHART_PALETTE[hash % CHART_PALETTE.length];
+    }
+
+    function getProgressHistory() {
+      try {
+        const raw = localStorage.getItem(PROGRESS_HISTORY_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return [];
+        return parsed;
+      } catch (_err) {
+        return [];
+      }
+    }
+
+    function saveProgressHistory(history) {
+      try {
+        localStorage.setItem(PROGRESS_HISTORY_KEY, JSON.stringify(history));
+      } catch (_err) {
+        // No-op when storage is unavailable.
+      }
+    }
+
+    function appendProgressSnapshot(standings) {
+      const snapshot = {
+        capturedAt: Date.now(),
+        managers: standings.reduce((acc, entry) => {
+          acc[entry.manager] = {
+            cumulativeHoles: entry.cumulativeHoles,
+            total: entry.total
+          };
+          return acc;
+        }, {})
+      };
+
+      const history = getProgressHistory();
+      const previous = history[history.length - 1];
+      const isDuplicate =
+        previous &&
+        LEAGUE_DATA.every((team) => {
+          const manager = team.manager;
+          const prev = previous?.managers?.[manager];
+          const next = snapshot?.managers?.[manager];
+          return prev && next && prev.cumulativeHoles === next.cumulativeHoles && prev.total === next.total;
+        });
+
+      if (!isDuplicate) {
+        history.push(snapshot);
+        const trimmedHistory = history.slice(-360);
+        saveProgressHistory(trimmedHistory);
+        return trimmedHistory;
+      }
+
+      return history;
     }
 
     function cutStatusFromCompetitor(competitor) {
@@ -380,9 +434,39 @@
       return { standings: managerScores, weekendPenaltyScore };
     }
 
-    function renderTeamProgressChart(standings) {
-      const points = standings.filter((entry) => Number.isFinite(entry.total) && Number.isFinite(entry.cumulativeHoles));
-      if (!points.length) {
+    function renderTeamProgressChart(standings, progressHistory) {
+      const managerSeries = standings.map((entry) => {
+        const points = progressHistory
+          .map((snapshot) => {
+            const managerPoint = snapshot?.managers?.[entry.manager];
+            if (!managerPoint) return null;
+            if (!Number.isFinite(managerPoint.cumulativeHoles) || !Number.isFinite(managerPoint.total)) return null;
+            return {
+              holes: managerPoint.cumulativeHoles,
+              score: managerPoint.total,
+              capturedAt: snapshot.capturedAt || 0
+            };
+          })
+          .filter(Boolean)
+          .sort((a, b) => a.capturedAt - b.capturedAt)
+          .filter((point, idx, arr) => {
+            if (idx === 0) return true;
+            const prev = arr[idx - 1];
+            return point.holes !== prev.holes || point.score !== prev.score;
+          });
+
+        return {
+          manager: entry.manager,
+          color: managerColor(entry.manager),
+          points,
+          latest: points[points.length - 1] || null,
+          placeNumber: entry.placeNumber,
+          total: entry.total
+        };
+      });
+
+      const allPoints = managerSeries.flatMap((series) => series.points);
+      if (!allPoints.length) {
         teamProgressChartEl.innerHTML = '<text x="50%" y="50%" text-anchor="middle" fill="#64748b" font-size="14">No chart data available yet.</text>';
         teamProgressLegendEl.innerHTML = "";
         return;
@@ -394,10 +478,10 @@
       const plotWidth = width - margin.left - margin.right;
       const plotHeight = height - margin.top - margin.bottom;
 
-      const xMaxRaw = Math.max(...points.map((entry) => entry.cumulativeHoles), 108);
+      const xMaxRaw = Math.max(...allPoints.map((point) => point.holes), 108);
       const xMax = Math.ceil(xMaxRaw / 18) * 18;
-      const yMinRaw = Math.min(...points.map((entry) => entry.total));
-      const yMaxRaw = Math.max(...points.map((entry) => entry.total));
+      const yMinRaw = Math.min(...allPoints.map((point) => point.score));
+      const yMaxRaw = Math.max(...allPoints.map((point) => point.score));
       const yPad = Math.max(2, Math.ceil((yMaxRaw - yMinRaw) * 0.1));
       const yMin = Math.min(yMinRaw - yPad, 0);
       const yMax = Math.max(yMaxRaw + yPad, 0);
@@ -406,7 +490,7 @@
       const xScale = (holes) => margin.left + (holes / xMax) * plotWidth;
       const yScale = (score) => margin.top + ((yMax - score) / yRange) * plotHeight;
 
-      const xTickStep = xMax > 288 ? 72 : xMax > 144 ? 36 : 18;
+      const xTickStep = 3;
       const xTicks = [];
       for (let tick = 0; tick <= xMax; tick += xTickStep) xTicks.push(tick);
       if (xTicks[xTicks.length - 1] !== xMax) xTicks.push(xMax);
@@ -416,9 +500,10 @@
 
       const xGrid = xTicks.map((tick) => {
         const x = xScale(tick);
+        const isMajorTick = tick % 18 === 0;
         return `
-          <line x1="${x}" y1="${margin.top}" x2="${x}" y2="${height - margin.bottom}" stroke="#e2e8f0" stroke-width="1" />
-          <text x="${x}" y="${height - margin.bottom + 14}" text-anchor="middle" fill="#64748b" font-size="10">${tick}</text>
+          <line x1="${x}" y1="${margin.top}" x2="${x}" y2="${height - margin.bottom}" stroke="${isMajorTick ? "#e2e8f0" : "#f1f5f9"}" stroke-width="${isMajorTick ? 1 : 0.7}" />
+          ${isMajorTick ? `<text x="${x}" y="${height - margin.bottom + 14}" text-anchor="middle" fill="#64748b" font-size="10">${tick}</text>` : ""}
         `;
       }).join("");
 
@@ -430,14 +515,16 @@
         `;
       }).join("");
 
-      const series = points.map((entry) => {
-        const color = managerColor(entry.manager);
-        const x = xScale(entry.cumulativeHoles);
-        const y = yScale(entry.total);
+      const series = managerSeries.map((entry) => {
+        if (!entry.points.length) return "";
+        const pointsAttr = entry.points.map((point) => `${xScale(point.holes)},${yScale(point.score)}`).join(" ");
+        const latest = entry.latest;
+        const latestX = xScale(latest.holes);
+        const latestY = yScale(latest.score);
         return `
-          <line x1="${xScale(0)}" y1="${yScale(0)}" x2="${x}" y2="${y}" stroke="${color}" stroke-opacity="0.18" stroke-width="1.5" />
-          <circle cx="${x}" cy="${y}" r="${entry.placeNumber === 1 ? 5 : 4}" fill="${color}" />
-          <text x="${x + 6}" y="${y - 6}" fill="${color}" font-size="10" font-weight="700">${entry.manager}</text>
+          <polyline points="${pointsAttr}" fill="none" stroke="${entry.color}" stroke-width="${entry.placeNumber === 1 ? 3 : 2}" stroke-linecap="round" stroke-linejoin="round" />
+          <circle cx="${latestX}" cy="${latestY}" r="${entry.placeNumber === 1 ? 5 : 4}" fill="${entry.color}" />
+          <text x="${latestX + 6}" y="${latestY - 6}" fill="${entry.color}" font-size="10" font-weight="700">${entry.manager}</text>
         `;
       }).join("");
 
@@ -452,15 +539,15 @@
         <text x="14" y="${margin.top + plotHeight / 2}" text-anchor="middle" fill="#475569" font-size="11" font-weight="600" transform="rotate(-90, 14, ${margin.top + plotHeight / 2})">Team score to par</text>
       `;
 
-      teamProgressLegendEl.innerHTML = points.map((entry) => {
-        const color = managerColor(entry.manager);
+      teamProgressLegendEl.innerHTML = managerSeries.map((entry) => {
+        if (!entry.latest) return "";
         return `
           <div class="flex items-center justify-between rounded-md bg-slate-50 px-2 py-1.5">
             <div class="flex items-center gap-1.5">
-              <span class="inline-block h-2.5 w-2.5 rounded-full" style="background:${color}"></span>
+              <span class="inline-block h-2.5 w-2.5 rounded-full" style="background:${entry.color}"></span>
               <span class="font-semibold text-slate-700">${entry.manager}</span>
             </div>
-            <span class="text-slate-500">${entry.cumulativeHoles}h · <span class="${scoreClass(entry.total)} font-semibold">${formatScore(entry.total)}</span></span>
+            <span class="text-slate-500">${entry.latest.holes}h · <span class="${scoreClass(entry.latest.score)} font-semibold">${formatScore(entry.latest.score)}</span></span>
           </div>
         `;
       }).join("");
@@ -603,8 +690,9 @@
       }
 
       const { standings, weekendPenaltyScore } = computeLeagueStandings(payload);
+      const progressHistory = appendProgressSnapshot(standings);
       renderLeaderboard(standings);
-      renderTeamProgressChart(standings);
+      renderTeamProgressChart(standings, progressHistory);
 
       const nowText = new Date().toLocaleString([], { hour: "numeric", minute: "2-digit" });
       liveStatusEl.textContent = `${usingCache ? "Live (cached)" : "Live"} · Updated at ${nowText}`;
