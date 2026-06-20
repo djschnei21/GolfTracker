@@ -67,6 +67,19 @@
         </table>
       </div>
     </section>
+
+    <section class="mt-4 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:p-4">
+      <div class="mb-2 flex items-end justify-between gap-3">
+        <div>
+          <h2 class="text-sm font-bold sm:text-base">Team Progress</h2>
+          <p class="text-[11px] text-slate-500 sm:text-xs">X: cumulative holes played (team of 6) · Y: live team score</p>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <svg id="teamProgressChart" class="h-64 w-full min-w-[320px]" viewBox="0 0 700 320" role="img" aria-label="Team score progress chart"></svg>
+      </div>
+      <div id="teamProgressLegend" class="mt-2 grid gap-1 text-[11px] sm:grid-cols-2 sm:text-xs"></div>
+    </section>
   </main>
 
   <script>
@@ -97,6 +110,10 @@
     const liveStatusEl = document.getElementById("liveStatus");
     const penaltyInfoEl = document.getElementById("penaltyInfo");
     const refreshBtn = document.getElementById("refreshBtn");
+    const teamProgressChartEl = document.getElementById("teamProgressChart");
+    const teamProgressLegendEl = document.getElementById("teamProgressLegend");
+
+    const CHART_PALETTE = ["#0f766e", "#0ea5e9", "#7c3aed", "#ea580c", "#16a34a", "#db2777", "#0369a1", "#b45309", "#4f46e5"];
 
     function normalizeName(name) {
       return (name || "")
@@ -134,6 +151,11 @@
         return "text-slate-700";
       }
       return score < 0 ? "text-rose-600" : "text-sky-700";
+    }
+
+    function managerColor(name) {
+      const hash = [...name].reduce((acc, char) => acc + char.charCodeAt(0), 0);
+      return CHART_PALETTE[hash % CHART_PALETTE.length];
     }
 
     function cutStatusFromCompetitor(competitor) {
@@ -182,6 +204,41 @@
       return scoreToInt(competitor?.score?.displayValue ?? competitor?.score?.value);
     }
 
+    function getHolesPlayed(competitor) {
+      const status = competitor?.status || {};
+      const linescores = Array.isArray(competitor?.linescores) ? competitor.linescores : [];
+      const roundFromPeriod = Number(status?.period);
+      const currentRound = Number.isFinite(roundFromPeriod) && roundFromPeriod > 0
+        ? roundFromPeriod
+        : Math.max(1, linescores.length);
+      const priorRoundHoles = Math.max(0, currentRound - 1) * 18;
+
+      if (status?.type?.completed || String(status?.displayValue || "").toUpperCase() === "F") {
+        return priorRoundHoles + 18;
+      }
+
+      if (Number.isFinite(status?.hole)) {
+        return priorRoundHoles + Math.min(18, Math.max(0, status.hole));
+      }
+
+      const thruText = String(status?.displayThru || "").trim().toUpperCase();
+      if (thruText === "F") return priorRoundHoles + 18;
+      const thruNum = Number(thruText);
+      if (Number.isFinite(thruNum)) {
+        return priorRoundHoles + Math.min(18, Math.max(0, thruNum));
+      }
+
+      const cutInfo = cutStatusFromCompetitor(competitor);
+      if (!cutInfo.madeCut) {
+        const completedRounds = linescores
+          .map((line) => scoreToInt(line?.displayValue))
+          .filter((value) => Number.isFinite(value)).length;
+        if (completedRounds) return completedRounds * 18;
+      }
+
+      return priorRoundHoles;
+    }
+
     function getThru(competitor) {
       const status = competitor?.status || {};
       if (status?.type?.completed) return "F";
@@ -220,6 +277,7 @@
           canonical: canonicalName(displayName),
           totalScore,
           todayScore: getTodayScore(competitor),
+          holesPlayed: getHolesPlayed(competitor),
           thru: getThru(competitor),
           cutStatus: cutInfo.label,
           madeCut: cutInfo.madeCut,
@@ -262,6 +320,7 @@
             name: player,
             tier: `Tier ${index + 1}`,
             todayScore: competitor?.todayScore ?? null,
+            holesPlayed: competitor?.holesPlayed ?? 0,
             thru: competitor?.thru ?? "--",
             totalScore: totalScore ?? null,
             effectiveScore: Number.isFinite(effectiveScore) ? effectiveScore : weekendPenaltyScore,
@@ -283,6 +342,7 @@
 
         const countingFive = sortedForCounting.slice(0, 5).map((item) => item.golfer.effectiveScore);
         const total = countingFive.reduce((sum, score) => sum + score, 0);
+        const cumulativeHoles = roster.reduce((sum, golfer) => sum + (Number.isFinite(golfer.holesPlayed) ? golfer.holesPlayed : 0), 0);
         const activeCount = roster.filter((g) => g.madeCut).length;
         const tieDistance = Math.abs(team.tiebreaker - actualWinnerScore);
 
@@ -291,6 +351,7 @@
           tiebreaker: team.tiebreaker,
           tieDistance,
           total,
+          cumulativeHoles,
           activeCount,
           roster
         };
@@ -317,6 +378,92 @@
       });
 
       return { standings: managerScores, weekendPenaltyScore };
+    }
+
+    function renderTeamProgressChart(standings) {
+      const points = standings.filter((entry) => Number.isFinite(entry.total) && Number.isFinite(entry.cumulativeHoles));
+      if (!points.length) {
+        teamProgressChartEl.innerHTML = '<text x="50%" y="50%" text-anchor="middle" fill="#64748b" font-size="14">No chart data available yet.</text>';
+        teamProgressLegendEl.innerHTML = "";
+        return;
+      }
+
+      const width = 700;
+      const height = 320;
+      const margin = { top: 18, right: 16, bottom: 42, left: 48 };
+      const plotWidth = width - margin.left - margin.right;
+      const plotHeight = height - margin.top - margin.bottom;
+
+      const xMaxRaw = Math.max(...points.map((entry) => entry.cumulativeHoles), 108);
+      const xMax = Math.ceil(xMaxRaw / 18) * 18;
+      const yMinRaw = Math.min(...points.map((entry) => entry.total));
+      const yMaxRaw = Math.max(...points.map((entry) => entry.total));
+      const yPad = Math.max(2, Math.ceil((yMaxRaw - yMinRaw) * 0.1));
+      const yMin = Math.min(yMinRaw - yPad, 0);
+      const yMax = Math.max(yMaxRaw + yPad, 0);
+      const yRange = Math.max(1, yMax - yMin);
+
+      const xScale = (holes) => margin.left + (holes / xMax) * plotWidth;
+      const yScale = (score) => margin.top + ((yMax - score) / yRange) * plotHeight;
+
+      const xTickStep = xMax > 288 ? 72 : xMax > 144 ? 36 : 18;
+      const xTicks = [];
+      for (let tick = 0; tick <= xMax; tick += xTickStep) xTicks.push(tick);
+      if (xTicks[xTicks.length - 1] !== xMax) xTicks.push(xMax);
+
+      const yTickCount = 5;
+      const yTicks = Array.from({ length: yTickCount + 1 }, (_, i) => yMin + (i * (yMax - yMin)) / yTickCount);
+
+      const xGrid = xTicks.map((tick) => {
+        const x = xScale(tick);
+        return `
+          <line x1="${x}" y1="${margin.top}" x2="${x}" y2="${height - margin.bottom}" stroke="#e2e8f0" stroke-width="1" />
+          <text x="${x}" y="${height - margin.bottom + 14}" text-anchor="middle" fill="#64748b" font-size="10">${tick}</text>
+        `;
+      }).join("");
+
+      const yGrid = yTicks.map((tick) => {
+        const y = yScale(tick);
+        return `
+          <line x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}" stroke="#e2e8f0" stroke-width="1" />
+          <text x="${margin.left - 6}" y="${y + 3}" text-anchor="end" fill="#64748b" font-size="10">${formatScore(Math.round(tick))}</text>
+        `;
+      }).join("");
+
+      const series = points.map((entry) => {
+        const color = managerColor(entry.manager);
+        const x = xScale(entry.cumulativeHoles);
+        const y = yScale(entry.total);
+        return `
+          <line x1="${xScale(0)}" y1="${yScale(0)}" x2="${x}" y2="${y}" stroke="${color}" stroke-opacity="0.18" stroke-width="1.5" />
+          <circle cx="${x}" cy="${y}" r="${entry.placeNumber === 1 ? 5 : 4}" fill="${color}" />
+          <text x="${x + 6}" y="${y - 6}" fill="${color}" font-size="10" font-weight="700">${entry.manager}</text>
+        `;
+      }).join("");
+
+      teamProgressChartEl.innerHTML = `
+        <rect x="0" y="0" width="${width}" height="${height}" fill="white" />
+        ${xGrid}
+        ${yGrid}
+        <line x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}" stroke="#94a3b8" />
+        <line x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${height - margin.bottom}" stroke="#94a3b8" />
+        ${series}
+        <text x="${margin.left + plotWidth / 2}" y="${height - 8}" text-anchor="middle" fill="#475569" font-size="11" font-weight="600">Cumulative holes golfed</text>
+        <text x="14" y="${margin.top + plotHeight / 2}" text-anchor="middle" fill="#475569" font-size="11" font-weight="600" transform="rotate(-90, 14, ${margin.top + plotHeight / 2})">Team score to par</text>
+      `;
+
+      teamProgressLegendEl.innerHTML = points.map((entry) => {
+        const color = managerColor(entry.manager);
+        return `
+          <div class="flex items-center justify-between rounded-md bg-slate-50 px-2 py-1.5">
+            <div class="flex items-center gap-1.5">
+              <span class="inline-block h-2.5 w-2.5 rounded-full" style="background:${color}"></span>
+              <span class="font-semibold text-slate-700">${entry.manager}</span>
+            </div>
+            <span class="text-slate-500">${entry.cumulativeHoles}h · <span class="${scoreClass(entry.total)} font-semibold">${formatScore(entry.total)}</span></span>
+          </div>
+        `;
+      }).join("");
     }
 
     function managerDetailMarkup(entry) {
@@ -457,6 +604,7 @@
 
       const { standings, weekendPenaltyScore } = computeLeagueStandings(payload);
       renderLeaderboard(standings);
+      renderTeamProgressChart(standings);
 
       const nowText = new Date().toLocaleString([], { hour: "numeric", minute: "2-digit" });
       liveStatusEl.textContent = `${usingCache ? "Live (cached)" : "Live"} · Updated at ${nowText}`;
