@@ -137,9 +137,16 @@
     }
 
     function cutStatusFromCompetitor(competitor) {
+      const statusTypeName = (competitor?.status?.type?.name || "").toUpperCase();
       const statusText = `${competitor?.status?.displayValue || ""} ${competitor?.status?.detail || ""} ${competitor?.status?.type?.description || ""}`.toUpperCase();
-      if (statusText.includes("MISSED CUT") || statusText.includes("MC")) return "Missed Cut";
-      return "Active";
+      const isOutOfWeekendField =
+        statusTypeName === "STATUS_CUT" ||
+        /\bMISSED CUT\b|\bCUT\b|\bMC\b|\bWITHDRAWN\b|\bWD\b|\bDISQUALIFIED\b|\bDQ\b/.test(statusText);
+
+      return {
+        label: isOutOfWeekendField ? "Missed Cut" : "Active",
+        madeCut: !isOutOfWeekendField
+      };
     }
 
     function getTodayScore(competitor) {
@@ -191,7 +198,7 @@
     }
 
     function pickWeekendPenaltyScore(competitors) {
-      const madeCut = competitors.filter((c) => c.cutStatus === "Active" && Number.isFinite(c.totalScore));
+      const madeCut = competitors.filter((c) => c.madeCut && Number.isFinite(c.totalScore));
       if (!madeCut.length) return 20;
       return madeCut.reduce((worst, next) => (next.totalScore > worst ? next.totalScore : worst), madeCut[0].totalScore);
     }
@@ -207,14 +214,15 @@
         const displayName = competitor?.athlete?.displayName || competitor?.athlete?.shortName;
         if (!displayName) return;
         const totalScore = getLiveTotalScore(competitor);
-        const cutStatus = cutStatusFromCompetitor(competitor);
+        const cutInfo = cutStatusFromCompetitor(competitor);
         const parsed = {
           name: displayName,
           canonical: canonicalName(displayName),
           totalScore,
           todayScore: getTodayScore(competitor),
           thru: getThru(competitor),
-          cutStatus,
+          cutStatus: cutInfo.label,
+          madeCut: cutInfo.madeCut,
           position: Number(competitor?.status?.position?.id || 999)
         };
         parsedCompetitors.push(parsed);
@@ -246,8 +254,9 @@
         const roster = team.picks.map((player, index) => {
           const competitor = resolvePlayer(player, competitorMap);
           const totalScore = competitor?.totalScore;
-          const cutStatus = competitor?.cutStatus || "Active";
-          const replacementApplied = cutStatus === "Missed Cut";
+          const madeCut = competitor?.madeCut ?? true;
+          const replacementApplied = !madeCut;
+          const cutStatus = replacementApplied ? "Missed Cut" : "Active";
           const effectiveScore = replacementApplied ? weekendPenaltyScore : totalScore;
           return {
             name: player,
@@ -257,6 +266,7 @@
             totalScore: totalScore ?? null,
             effectiveScore: Number.isFinite(effectiveScore) ? effectiveScore : weekendPenaltyScore,
             cutStatus: replacementApplied ? "Missed Cut (Penalty Applied)" : cutStatus,
+            madeCut,
             contributes: false,
             dropped: false
           };
@@ -273,7 +283,7 @@
 
         const countingFive = sortedForCounting.slice(0, 5).map((item) => item.golfer.effectiveScore);
         const total = countingFive.reduce((sum, score) => sum + score, 0);
-        const activeCount = roster.filter((g) => !g.cutStatus.includes("Missed Cut")).length;
+        const activeCount = roster.filter((g) => g.madeCut).length;
         const tieDistance = Math.abs(team.tiebreaker - actualWinnerScore);
 
         return {
