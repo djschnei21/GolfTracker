@@ -68,24 +68,11 @@
       </div>
     </section>
 
-    <section class="mt-4 rounded-xl bg-white p-3 shadow-sm ring-1 ring-slate-200 sm:p-4">
-      <div class="mb-2 flex items-end justify-between gap-3">
-        <div>
-          <h2 class="text-sm font-bold sm:text-base">Team Progress</h2>
-          <p class="text-[11px] text-slate-500 sm:text-xs">X: cumulative holes played (counting 5, every 3 holes) · Y: live team score</p>
-        </div>
-      </div>
-      <div class="overflow-x-auto">
-        <svg id="teamProgressChart" class="h-64 w-full min-w-[320px]" viewBox="0 0 700 320" role="img" aria-label="Team score progress chart"></svg>
-      </div>
-      <div id="teamProgressLegend" class="mt-2 grid gap-1 text-[11px] sm:grid-cols-2 sm:text-xs"></div>
-    </section>
   </main>
 
   <script>
     const ESPN_ENDPOINT = "https://site.api.espn.com/apis/site/v2/sports/golf/leaderboard?league=pga";
     const CACHE_KEY = "us_open_fantasy_cache_v1";
-    const PROGRESS_HISTORY_KEY = "us_open_team_progress_history_v3";
 
     const LEAGUE_DATA = [
       { manager: "Nick", tiebreaker: -5, picks: ["Scottie Scheffler", "Russell Henley", "Maverick McNealy", "Kurt Kitayama", "Gary Woodland", "Ryo Hisatsune"] },
@@ -111,10 +98,6 @@
     const liveStatusEl = document.getElementById("liveStatus");
     const penaltyInfoEl = document.getElementById("penaltyInfo");
     const refreshBtn = document.getElementById("refreshBtn");
-    const teamProgressChartEl = document.getElementById("teamProgressChart");
-    const teamProgressLegendEl = document.getElementById("teamProgressLegend");
-
-    const CHART_PALETTE = ["#0f766e", "#0ea5e9", "#7c3aed", "#ea580c", "#16a34a", "#db2777", "#0369a1", "#b45309", "#4f46e5"];
 
     function normalizeName(name) {
       return (name || "")
@@ -154,114 +137,6 @@
       return score < 0 ? "text-rose-600" : "text-sky-700";
     }
 
-    function managerColor(name) {
-      const hash = [...name].reduce((acc, char) => acc + char.charCodeAt(0), 0);
-      return CHART_PALETTE[hash % CHART_PALETTE.length];
-    }
-
-    function getProgressHistory() {
-      try {
-        const raw = localStorage.getItem(PROGRESS_HISTORY_KEY);
-        if (!raw) return [];
-        const parsed = JSON.parse(raw);
-        if (!Array.isArray(parsed)) return [];
-        return parsed;
-      } catch (_err) {
-        return [];
-      }
-    }
-
-    function saveProgressHistory(history) {
-      try {
-        localStorage.setItem(PROGRESS_HISTORY_KEY, JSON.stringify(history));
-      } catch (_err) {
-        // No-op when storage is unavailable.
-      }
-    }
-
-    function appendProgressSnapshot(standings) {
-      const snapshot = {
-        capturedAt: Date.now(),
-        managers: standings.reduce((acc, entry) => {
-          acc[entry.manager] = {
-            cumulativeHoles: entry.cumulativeHoles,
-            total: entry.total
-          };
-          return acc;
-        }, {})
-      };
-
-      const history = getProgressHistory();
-      const previous = history[history.length - 1];
-      const isDuplicate =
-        previous &&
-        LEAGUE_DATA.every((team) => {
-          const manager = team.manager;
-          const prev = previous?.managers?.[manager];
-          const next = snapshot?.managers?.[manager];
-          return prev && next && prev.cumulativeHoles === next.cumulativeHoles && prev.total === next.total;
-        });
-
-      if (!isDuplicate) {
-        history.push(snapshot);
-        const trimmedHistory = history.slice(-360);
-        saveProgressHistory(trimmedHistory);
-        return trimmedHistory;
-      }
-
-      return history;
-    }
-
-    function buildThreeHoleSeries(rawPoints) {
-      if (!rawPoints.length) return [{ holes: 0, score: 0, capturedAt: 0 }];
-
-      const bucketed = [];
-      rawPoints
-        .slice()
-        .sort((a, b) => (a.capturedAt || 0) - (b.capturedAt || 0))
-        .forEach((point) => {
-          if (!Number.isFinite(point.holes) || !Number.isFinite(point.score)) return;
-          const holesBucket = Math.max(0, Math.floor(point.holes / 3) * 3);
-          const last = bucketed[bucketed.length - 1];
-          if (last && last.holes === holesBucket) {
-            last.score = point.score;
-            last.capturedAt = point.capturedAt || 0;
-            return;
-          }
-          if (!last || holesBucket > last.holes) {
-            bucketed.push({
-              holes: holesBucket,
-              score: point.score,
-              capturedAt: point.capturedAt || 0
-            });
-          }
-        });
-
-      const series = [{ holes: 0, score: 0, capturedAt: 0 }];
-      let previous = series[series.length - 1];
-
-      bucketed.forEach((targetPoint) => {
-        if (targetPoint.holes <= previous.holes) return;
-        const gap = targetPoint.holes - previous.holes;
-        const steps = Math.floor(gap / 3);
-
-        for (let i = 1; i <= steps; i += 1) {
-          const hole = previous.holes + i * 3;
-          // Use step-wise carry-forward so lines advance by observed 3-hole buckets,
-          // instead of drawing a synthetic straight interpolation from origin/current.
-          const bucketScore = hole < targetPoint.holes ? previous.score : targetPoint.score;
-          series.push({
-            holes: hole,
-            score: bucketScore,
-            capturedAt: targetPoint.capturedAt
-          });
-        }
-
-        previous = series[series.length - 1];
-      });
-
-      return series;
-    }
 
     function cutStatusFromCompetitor(competitor) {
       const statusTypeName = (competitor?.status?.type?.name || "").toUpperCase();
@@ -435,21 +310,17 @@
         const roster = team.picks.map((player, index) => {
           const competitor = resolvePlayer(player, competitorMap);
           const totalScore = competitor?.totalScore;
-          const holesPlayed = competitor?.holesPlayed ?? 0;
           const madeCut = competitor?.madeCut ?? true;
           const replacementApplied = !madeCut;
           const cutStatus = replacementApplied ? "Missed Cut" : "Active";
           const effectiveScoreSource = replacementApplied ? weekendPenaltyScore : totalScore;
-          const effectiveHolesSource = replacementApplied ? weekendPenaltyHoles : holesPlayed;
           return {
             name: player,
             tier: `Tier ${index + 1}`,
             todayScore: competitor?.todayScore ?? null,
-            holesPlayed,
             thru: competitor?.thru ?? "--",
             totalScore: totalScore ?? null,
             effectiveScore: Number.isFinite(effectiveScoreSource) ? effectiveScoreSource : weekendPenaltyScore,
-            effectiveHoles: Number.isFinite(effectiveHolesSource) ? effectiveHolesSource : weekendPenaltyHoles,
             cutStatus: replacementApplied ? "Missed Cut (Penalty Applied)" : cutStatus,
             madeCut,
             contributes: false,
@@ -468,9 +339,6 @@
 
         const countingFiveGolfers = sortedForCounting.slice(0, 5).map((item) => item.golfer);
         const total = countingFiveGolfers.reduce((sum, golfer) => sum + golfer.effectiveScore, 0);
-        const cumulativeHoles = countingFiveGolfers.reduce((sum, golfer) => (
-          sum + (Number.isFinite(golfer.effectiveHoles) ? golfer.effectiveHoles : 0)
-        ), 0);
         const activeCount = roster.filter((g) => g.madeCut).length;
         const tieDistance = Math.abs(team.tiebreaker - actualWinnerScore);
 
@@ -479,7 +347,6 @@
           tiebreaker: team.tiebreaker,
           tieDistance,
           total,
-          cumulativeHoles,
           activeCount,
           roster
         };
@@ -508,126 +375,6 @@
       return { standings: managerScores, weekendPenaltyScore, weekendPenaltyHoles };
     }
 
-    function renderTeamProgressChart(standings, progressHistory) {
-      const managerSeries = standings.map((entry) => {
-        const rawPoints = progressHistory
-          .map((snapshot) => {
-            const managerPoint = snapshot?.managers?.[entry.manager];
-            if (!managerPoint) return null;
-            if (!Number.isFinite(managerPoint.cumulativeHoles) || !Number.isFinite(managerPoint.total)) return null;
-            return {
-              holes: managerPoint.cumulativeHoles,
-              score: managerPoint.total,
-              capturedAt: snapshot.capturedAt || 0
-            };
-          })
-          .filter(Boolean)
-          .sort((a, b) => a.capturedAt - b.capturedAt)
-          .filter((point, idx, arr) => {
-            if (idx === 0) return true;
-            const prev = arr[idx - 1];
-            return point.holes !== prev.holes || point.score !== prev.score;
-          });
-
-        const points = buildThreeHoleSeries(rawPoints);
-
-        return {
-          manager: entry.manager,
-          color: managerColor(entry.manager),
-          points,
-          latest: points[points.length - 1] || null,
-          placeNumber: entry.placeNumber,
-          total: entry.total
-        };
-      });
-
-      const allPoints = managerSeries.flatMap((series) => series.points);
-      if (!allPoints.length) {
-        teamProgressChartEl.innerHTML = '<text x="50%" y="50%" text-anchor="middle" fill="#64748b" font-size="14">No chart data available yet.</text>';
-        teamProgressLegendEl.innerHTML = "";
-        return;
-      }
-
-      const width = 700;
-      const height = 320;
-      const margin = { top: 18, right: 16, bottom: 42, left: 48 };
-      const plotWidth = width - margin.left - margin.right;
-      const plotHeight = height - margin.top - margin.bottom;
-
-      const xMaxRaw = Math.max(...allPoints.map((point) => point.holes), 108);
-      const xMax = Math.ceil(xMaxRaw / 18) * 18;
-      const yMinRaw = Math.min(...allPoints.map((point) => point.score));
-      const yMaxRaw = Math.max(...allPoints.map((point) => point.score));
-      const yPad = Math.max(2, Math.ceil((yMaxRaw - yMinRaw) * 0.1));
-      const yMin = Math.min(yMinRaw - yPad, 0);
-      const yMax = Math.max(yMaxRaw + yPad, 0);
-      const yRange = Math.max(1, yMax - yMin);
-
-      const xScale = (holes) => margin.left + (holes / xMax) * plotWidth;
-      const yScale = (score) => margin.top + ((yMax - score) / yRange) * plotHeight;
-
-      const xTickStep = 3;
-      const xTicks = [];
-      for (let tick = 0; tick <= xMax; tick += xTickStep) xTicks.push(tick);
-      if (xTicks[xTicks.length - 1] !== xMax) xTicks.push(xMax);
-
-      const yTickCount = 5;
-      const yTicks = Array.from({ length: yTickCount + 1 }, (_, i) => yMin + (i * (yMax - yMin)) / yTickCount);
-
-      const xGrid = xTicks.map((tick) => {
-        const x = xScale(tick);
-        const isMajorTick = tick % 18 === 0;
-        return `
-          <line x1="${x}" y1="${margin.top}" x2="${x}" y2="${height - margin.bottom}" stroke="${isMajorTick ? "#e2e8f0" : "#f1f5f9"}" stroke-width="${isMajorTick ? 1 : 0.7}" />
-          ${isMajorTick ? `<text x="${x}" y="${height - margin.bottom + 14}" text-anchor="middle" fill="#64748b" font-size="10">${tick}</text>` : ""}
-        `;
-      }).join("");
-
-      const yGrid = yTicks.map((tick) => {
-        const y = yScale(tick);
-        return `
-          <line x1="${margin.left}" y1="${y}" x2="${width - margin.right}" y2="${y}" stroke="#e2e8f0" stroke-width="1" />
-          <text x="${margin.left - 6}" y="${y + 3}" text-anchor="end" fill="#64748b" font-size="10">${formatScore(Math.round(tick))}</text>
-        `;
-      }).join("");
-
-      const series = managerSeries.map((entry) => {
-        if (!entry.points.length) return "";
-        const pointsAttr = entry.points.map((point) => `${xScale(point.holes)},${yScale(point.score)}`).join(" ");
-        const latest = entry.latest;
-        const latestX = xScale(latest.holes);
-        const latestY = yScale(latest.score);
-        return `
-          <polyline points="${pointsAttr}" fill="none" stroke="${entry.color}" stroke-width="${entry.placeNumber === 1 ? 3 : 2}" stroke-linecap="round" stroke-linejoin="round" />
-          <circle cx="${latestX}" cy="${latestY}" r="${entry.placeNumber === 1 ? 5 : 4}" fill="${entry.color}" />
-          <text x="${latestX + 6}" y="${latestY - 6}" fill="${entry.color}" font-size="10" font-weight="700">${entry.manager}</text>
-        `;
-      }).join("");
-
-      teamProgressChartEl.innerHTML = `
-        <rect x="0" y="0" width="${width}" height="${height}" fill="white" />
-        ${xGrid}
-        ${yGrid}
-        <line x1="${margin.left}" y1="${height - margin.bottom}" x2="${width - margin.right}" y2="${height - margin.bottom}" stroke="#94a3b8" />
-        <line x1="${margin.left}" y1="${margin.top}" x2="${margin.left}" y2="${height - margin.bottom}" stroke="#94a3b8" />
-        ${series}
-        <text x="${margin.left + plotWidth / 2}" y="${height - 8}" text-anchor="middle" fill="#475569" font-size="11" font-weight="600">Cumulative holes golfed</text>
-        <text x="14" y="${margin.top + plotHeight / 2}" text-anchor="middle" fill="#475569" font-size="11" font-weight="600" transform="rotate(-90, 14, ${margin.top + plotHeight / 2})">Team score to par</text>
-      `;
-
-      teamProgressLegendEl.innerHTML = managerSeries.map((entry) => {
-        if (!entry.latest) return "";
-        return `
-          <div class="flex items-center justify-between rounded-md bg-slate-50 px-2 py-1.5">
-            <div class="flex items-center gap-1.5">
-              <span class="inline-block h-2.5 w-2.5 rounded-full" style="background:${entry.color}"></span>
-              <span class="font-semibold text-slate-700">${entry.manager}</span>
-            </div>
-            <span class="text-slate-500">${entry.latest.holes}h · <span class="${scoreClass(entry.latest.score)} font-semibold">${formatScore(entry.latest.score)}</span></span>
-          </div>
-        `;
-      }).join("");
-    }
 
     function managerDetailMarkup(entry) {
       const rows = entry.roster.map((golfer) => {
@@ -766,9 +513,7 @@
       }
 
       const { standings, weekendPenaltyScore, weekendPenaltyHoles } = computeLeagueStandings(payload);
-      const progressHistory = appendProgressSnapshot(standings);
       renderLeaderboard(standings);
-      renderTeamProgressChart(standings, progressHistory);
 
       const nowText = new Date().toLocaleString([], { hour: "numeric", minute: "2-digit" });
       liveStatusEl.textContent = `${usingCache ? "Live (cached)" : "Live"} · Updated at ${nowText}`;
