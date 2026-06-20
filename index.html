@@ -57,10 +57,11 @@
           <thead class="sticky top-0 bg-slate-100 text-left">
             <tr class="border-b border-slate-200 text-slate-600">
               <th class="w-[12%] px-2 py-2 font-semibold sm:px-3">Pos</th>
-              <th class="w-[44%] px-2 py-2 font-semibold sm:px-3">Manager</th>
-              <th class="w-[24%] px-2 py-2 text-right font-semibold sm:px-3">Team Score</th>
-              <th class="w-[14%] px-2 py-2 text-right font-semibold sm:px-3">Active</th>
-              <th class="w-[6%] px-1 py-2 text-right font-semibold"></th>
+              <th class="w-[36%] px-2 py-2 font-semibold sm:px-3">Manager</th>
+              <th class="w-[20%] px-2 py-2 text-right font-semibold sm:px-3">Team Score</th>
+              <th class="w-[18%] px-2 py-2 text-right font-semibold sm:px-3">Holes</th>
+              <th class="w-[10%] px-2 py-2 text-right font-semibold sm:px-3">Active</th>
+              <th class="w-[4%] px-1 py-2 text-right font-semibold"></th>
             </tr>
           </thead>
           <tbody id="leaderboardBody"></tbody>
@@ -310,17 +311,21 @@
         const roster = team.picks.map((player, index) => {
           const competitor = resolvePlayer(player, competitorMap);
           const totalScore = competitor?.totalScore;
+          const holesPlayed = Number.isFinite(competitor?.holesPlayed) ? competitor.holesPlayed : 0;
           const madeCut = competitor?.madeCut ?? true;
           const replacementApplied = !madeCut;
           const cutStatus = replacementApplied ? "Missed Cut" : "Active";
           const effectiveScoreSource = replacementApplied ? weekendPenaltyScore : totalScore;
+          const effectiveHolesSource = replacementApplied ? weekendPenaltyHoles : holesPlayed;
           return {
             name: player,
             tier: `Tier ${index + 1}`,
             todayScore: competitor?.todayScore ?? null,
+            holesPlayed,
             thru: competitor?.thru ?? "--",
             totalScore: totalScore ?? null,
             effectiveScore: Number.isFinite(effectiveScoreSource) ? effectiveScoreSource : weekendPenaltyScore,
+            effectiveHoles: Number.isFinite(effectiveHolesSource) ? effectiveHolesSource : weekendPenaltyHoles,
             cutStatus: replacementApplied ? "Missed Cut (Penalty Applied)" : cutStatus,
             madeCut,
             contributes: false,
@@ -339,6 +344,7 @@
 
         const countingFiveGolfers = sortedForCounting.slice(0, 5).map((item) => item.golfer);
         const total = countingFiveGolfers.reduce((sum, golfer) => sum + golfer.effectiveScore, 0);
+        const holesGolfed = countingFiveGolfers.reduce((sum, golfer) => sum + golfer.effectiveHoles, 0);
         const activeCount = roster.filter((g) => g.madeCut).length;
         const tieDistance = Math.abs(team.tiebreaker - actualWinnerScore);
 
@@ -347,6 +353,7 @@
           tiebreaker: team.tiebreaker,
           tieDistance,
           total,
+          holesGolfed,
           activeCount,
           roster
         };
@@ -431,13 +438,14 @@
 
         return `
           <tr class="${baseBorder} ${highlightRow}">
-            <td colspan="5" class="p-0">
+            <td colspan="6" class="p-0">
               <details class="group">
                 <summary class="cursor-pointer px-2 py-2 sm:px-3">
-                  <div class="grid grid-cols-[12%_44%_24%_14%_6%] items-center gap-1 text-xs sm:gap-2 sm:text-sm">
+                  <div class="grid grid-cols-[12%_36%_20%_18%_10%_4%] items-center gap-1 text-xs sm:gap-2 sm:text-sm">
                     <span class="font-bold ${isLeader ? "text-emerald-700" : "text-slate-700"}">${entry.positionLabel}</span>
                     <span class="font-semibold leading-tight">${entry.manager} ${isLeader ? '<span class="ml-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] text-emerald-700">1st</span>' : ""}</span>
                     <span class="text-right font-bold ${scoreClass(entry.total)}">${formatScore(entry.total)}</span>
+                    <span class="text-right font-semibold text-slate-700">${entry.holesGolfed}</span>
                     <span class="text-right text-slate-600">${entry.activeCount}/6</span>
                     <span class="text-right text-base leading-none text-slate-400 transition-transform duration-200 group-open:rotate-90">›</span>
                   </div>
