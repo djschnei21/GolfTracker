@@ -72,7 +72,7 @@
       <div class="mb-2 flex items-end justify-between gap-3">
         <div>
           <h2 class="text-sm font-bold sm:text-base">Team Progress</h2>
-          <p class="text-[11px] text-slate-500 sm:text-xs">X: cumulative holes played (team of 6, every 3 holes) · Y: live team score</p>
+          <p class="text-[11px] text-slate-500 sm:text-xs">X: cumulative holes played (counting 5, every 3 holes) · Y: live team score</p>
         </div>
       </div>
       <div class="overflow-x-auto">
@@ -85,7 +85,7 @@
   <script>
     const ESPN_ENDPOINT = "https://site.api.espn.com/apis/site/v2/sports/golf/leaderboard?league=pga";
     const CACHE_KEY = "us_open_fantasy_cache_v1";
-    const PROGRESS_HISTORY_KEY = "us_open_team_progress_history_v1";
+    const PROGRESS_HISTORY_KEY = "us_open_team_progress_history_v2";
 
     const LEAGUE_DATA = [
       { manager: "Nick", tiebreaker: -5, picks: ["Scottie Scheffler", "Russell Henley", "Maverick McNealy", "Kurt Kitayama", "Gary Woodland", "Ryo Hisatsune"] },
@@ -445,9 +445,11 @@
           if (idx === 5) item.golfer.dropped = true;
         });
 
-        const countingFive = sortedForCounting.slice(0, 5).map((item) => item.golfer.effectiveScore);
-        const total = countingFive.reduce((sum, score) => sum + score, 0);
-        const cumulativeHoles = roster.reduce((sum, golfer) => sum + (Number.isFinite(golfer.holesPlayed) ? golfer.holesPlayed : 0), 0);
+        const countingFiveGolfers = sortedForCounting.slice(0, 5).map((item) => item.golfer);
+        const total = countingFiveGolfers.reduce((sum, golfer) => sum + golfer.effectiveScore, 0);
+        const cumulativeHoles = countingFiveGolfers.reduce((sum, golfer) => (
+          sum + (Number.isFinite(golfer.holesPlayed) ? golfer.holesPlayed : 0)
+        ), 0);
         const activeCount = roster.filter((g) => g.madeCut).length;
         const tieDistance = Math.abs(team.tiebreaker - actualWinnerScore);
 
