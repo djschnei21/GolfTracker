@@ -1,4 +1,4 @@
-# 2026 U.S. Open Fantasy Golf Pool
+# 2026 British Open Fantasy Golf Pool
 
 Lightweight, mobile-first single-page app for a fantasy golf pool leaderboard.
 

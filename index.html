@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>2026 U.S. Open Fantasy Golf Pool</title>
+  <title>2026 British Open Fantasy Golf Pool</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     @keyframes pulse-live {
@@ -26,7 +26,7 @@
     <header class="mb-4 rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
       <div class="flex items-start justify-between gap-3">
         <div>
-          <h1 class="text-lg font-bold leading-tight sm:text-2xl">2026 U.S. Open Fantasy Pool</h1>
+          <h1 class="text-lg font-bold leading-tight sm:text-2xl">2026 British Open Fantasy Pool</h1>
           <p class="text-[11px] text-slate-500 sm:hidden">Tap a manager row to view roster</p>
         </div>
         <div class="flex items-center gap-2">
@@ -73,24 +73,24 @@
 
   <script>
     const ESPN_ENDPOINT = "https://site.api.espn.com/apis/site/v2/sports/golf/leaderboard?league=pga";
-    const CACHE_KEY = "us_open_fantasy_cache_v1";
+    const CACHE_KEY = "british_open_fantasy_cache_v1";
 
     const LEAGUE_DATA = [
-      { manager: "Nick", tiebreaker: -5, picks: ["Scottie Scheffler", "Russell Henley", "Maverick McNealy", "Kurt Kitayama", "Gary Woodland", "Ryo Hisatsune"] },
-      { manager: "Dad", tiebreaker: -8, picks: ["Scottie Scheffler", "Collin Morikawa", "J.J. Spaun", "Shane Lowry", "Nicolai Højgaard", "Keegan Bradley"] },
-      { manager: "Mom", tiebreaker: -2, picks: ["Scottie Scheffler", "Sam Burns", "Justin Rose", "Adam Scott", "Alex Fitzpatrick", "Akshay Bhatia"] },
-      { manager: "Hannah", tiebreaker: -3, picks: ["Scottie Scheffler", "Russell Henley", "Justin Rose", "Sepp Straka", "Nicolai Højgaard", "Daniel Berger"] },
-      { manager: "Dan", tiebreaker: -1, picks: ["Scottie Scheffler", "Collin Morikawa", "Hideki Matsuyama", "Shane Lowry", "Jason Day", "Cameron Smith"] },
-      { manager: "Heath", tiebreaker: -1, picks: ["Tommy Fleetwood", "Sam Burns", "J.J. Spaun", "Shane Lowry", "Alex Fitzpatrick", "Corey Conners"] },
-      { manager: "Lauren", tiebreaker: 1, picks: ["Matt Fitzpatrick", "Chris Gotterup", "Justin Rose", "Aaron Rai", "Ryan Gerard", "Alex Noren"] },
-      { manager: "Iuliia", tiebreaker: -4, picks: ["Rory McIlroy", "Sam Burns", "Justin Rose", "Shane Lowry", "Ryan Gerard", "Alex Noren"] },
-      { manager: "Luke", tiebreaker: -2, picks: ["Xander Schauffele", "Russell Henley", "Hideki Matsuyama", "Alex Smalley", "J.T. Poston", "Brian Harman"] }
+      { manager: "Nick", tiebreaker: -12, picks: ["Chris Gotterup", "Russell Henley", "Patrick Reed", "Aaron Rai", "Michael Thorbjornsen", "Tom McKibbin"] },
+      { manager: "Dad", tiebreaker: -22, picks: ["Jon Rahm", "Tyrrell Hatton", "Shane Lowry", "Aaron Rai", "Corey Conners", "J.T. Poston"] },
+      { manager: "Mom", tiebreaker: -9, picks: ["Rory McIlroy", "Justin Rose", "Tom Kim", "Alex Fitzpatrick", "Akshay Bhatia", "Max Homa"] },
+      { manager: "Hannah", tiebreaker: -9, picks: ["Tommy Fleetwood", "Justin Rose", "Hideki Matsuyama", "Aaron Rai", "Alexander Noren", "Daniel Berger"] },
+      { manager: "Dan", tiebreaker: -10, picks: ["Scottie Scheffler", "Justin Rose", "Jordan Spieth", "Aaron Rai", "Cameron Smith", "Sepp Straka"] },
+      { manager: "Heath", tiebreaker: -16, picks: ["Rory McIlroy", "Sam Burns", "Si Woo Kim", "Maverick McNealy", "Michael Thorbjornsen", "Eric Cole"] },
+      { manager: "Lauren", tiebreaker: -12, picks: ["Rory McIlroy", "Wyndham Clark", "J.J. Spaun", "Alex Fitzpatrick", "Alexander Noren", "Matthew Jordan"] },
+      { manager: "Iuliia", tiebreaker: -11, picks: ["Cameron Young", "Wyndham Clark", "Patrick Reed", "Ben Griffin", "Rickie Fowler", "Sepp Straka"] },
+      { manager: "Luke", tiebreaker: -12, picks: ["Matt Fitzpatrick", "Tyrrell Hatton", "Justin Thomas", "Maverick McNealy", "Brian Harman", "J.T. Poston"] }
     ];
 
     const PLAYER_ALIASES = {
       "jt poston": "j t poston",
       "jj spaun": "j j spaun",
-      "nicolai hojgaard": "nicolai hojgaard",
+      "alexander noren": "alex noren",
       "rory mcilroy": "rory mcilroy"
     };
 
